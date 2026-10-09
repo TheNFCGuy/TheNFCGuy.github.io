@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><meta http-equiv="cache-control" content="no-store"><title>QwerNFC • QR-005</title><style>body{background:#03130a;color:#eafbef;min-height:100dvh;display:grid;place-items:center;text-align:center;font:16px system-ui}p{color:#a6c5b0}</style></head><body><main role="status" aria-live="polite"><h1>QwerNFC</h1><p>Opening your secure Restore page…</p></main><script>
+(async()=>{
+const id="QR-005";
+const fallback="https://qwernfc-api.qwernfc-api.workers.dev/update-v2/?id="+encodeURIComponent(id);
+try{
+const url="/permanent-qr-manager/update-v2/index.html?v="+Date.now();
+const response=await fetch(url,{cache:"no-store"});
+if(!response.ok)throw new Error("Customer page unavailable");
+const html=await response.text();
+if(!html.includes("QwerNFC Update Info")||!html.includes("const DEFAULT_API_BASE"))throw new Error("Invalid QwerNFC page");
+const next=new URL(location.href);
+next.searchParams.set("id",id);
+history.replaceState(null,"",next.pathname+next.search+next.hash);
+document.open();
+document.write(html);
+document.close();
+}catch{
+location.replace(fallback);
+}
+})();
+</script></body></html>
