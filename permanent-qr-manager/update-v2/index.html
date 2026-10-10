@@ -4329,13 +4329,13 @@ body.restore-page-ready:not(.setup-calibration-open){
     }
   };
 
-  const loadSetupLifecycleState=async()=>{
+  const loadSetupLifecycleState=async({preserveFinishing=false}={})=>{
     const status=await apiJson("/v1/public/qrs/"+encodeURIComponent(id)+"/setup-status",{timeoutMs:5000});
     const lifecycle=String(status?.state||"");
     if(!["ACTIVE","SETUP_AVAILABLE","SETUP_PENDING","RESETTING"].includes(lifecycle)){
       throw new Error("This QwerNFC setup state could not be verified.");
     }
-    if(lifecycle!=="ACTIVE"){
+    if(lifecycle!=="ACTIVE" && !preserveFinishing && !readCalibrationProgress()?.finishRequested){
       if(lifecycle==="RESETTING") clearSetupCalibrationMarker();
       // Confirmed empty setup after a previous calibration means the owner
       // reset the record; do not attach the previous customer's checkpoint.
@@ -4634,7 +4634,8 @@ body.restore-page-ready:not(.setup-calibration-open){
       qrVerified:patch.qrVerified===undefined?Boolean(old.qrVerified):Boolean(patch.qrVerified),
       nfcWritten:patch.nfcWritten===undefined?Boolean(old.nfcWritten):Boolean(patch.nfcWritten),
       nfcVerified:patch.nfcVerified===undefined?Boolean(old.nfcVerified):Boolean(patch.nfcVerified),
-      finishRequested:patch.finishRequested===undefined?Boolean(old.finishRequested):Boolean(patch.finishRequested)
+      finishRequested:patch.finishRequested===undefined?Boolean(old.finishRequested):Boolean(patch.finishRequested),
+      finishConfirmed:patch.finishConfirmed===undefined?Boolean(old.finishConfirmed):Boolean(patch.finishConfirmed)
     };
     for(const store of [localStorage,sessionStorage])try{store.setItem(SETUP_CALIBRATION_KEY,JSON.stringify(row));}catch{}
     return row;
@@ -4714,6 +4715,9 @@ body.restore-page-ready:not(.setup-calibration-open){
   const isSetupInactive=()=>{
     const saved=readCalibrationProgress();
     if(!saved) return false;
+    // A Finish already requested/confirmed must never be erased by inactivity.
+    // Management decides whether an explicit Finish completed.
+    if(saved.finishRequested===true) return false;
     const last=Number(saved.lastActivityAt||saved.savedAt);
     return Number.isFinite(last) && Date.now()-last>=10*60*1000;
   };
@@ -4922,7 +4926,14 @@ body.restore-page-ready:not(.setup-calibration-open){
   };
   const resumeCalibrationIfNeeded=()=>{
     const saved=readCalibrationProgress();
-    if(!saved||state.setupLifecycle!=="SETUP_SYNCED") return;
+    if(!saved) return;
+    if(saved.finishConfirmed===true){
+      // Finish succeeded earlier; recover Restore instead of reopening calibration.
+      closeCalibrationModal({force:true});
+      if(!state.publicLoadBusy) void loadPublicRecord({finishingCalibration:true});
+      return;
+    }
+    if(state.setupLifecycle!=="SETUP_SYNCED") return;
     if(calibrationLayer && !calibrationLayer.classList.contains("hidden")) return;
     openCalibrationModal({restoring:true});
   };
@@ -5115,6 +5126,13 @@ body.restore-page-ready:not(.setup-calibration-open){
     progress?.phase==="complete" && progress.qrVerified &&
     progress.nfcWritten && progress.nfcVerified
   );
+  const markCalibrationFinishConfirmed=()=>{
+    // Keep the checkpoint and activation proof until Restore has loaded.
+    persistCalibrationProgress({phase:"complete",finishRequested:true,finishConfirmed:true,touch:true});
+    calibrationResumeAfterInterruption=true;
+    stopSetupLifecyclePolling();
+    closeCalibrationModal({force:true});
+  };
   const markCalibrationFinalized=()=>{
     clearSetupCalibrationMarker();
     calibrationResumeAfterInterruption=false;
@@ -5141,13 +5159,13 @@ body.restore-page-ready:not(.setup-calibration-open){
       if(status?.ok!==true || status?.id!==id) return false;
       // Reconcile a successful Finish response that Android/Chrome lost.
       if(status.status==="complete"){
-        markCalibrationFinalized();
+        markCalibrationFinishConfirmed();
         return true;
       }
       // Only retry an already-requested Finish; never skip physical verification.
       if(status.status==="pending" && progress.finishRequested===true && calibrationVerified(progress)){
         await confirmCalibrationFinish();
-        markCalibrationFinalized();
+        markCalibrationFinishConfirmed();
         return true;
       }
     }catch{
@@ -5186,12 +5204,16 @@ body.restore-page-ready:not(.setup-calibration-open){
     try{
       // Management must acknowledge Finish BEFORE Restore is displayed.
       await confirmCalibrationFinish();
-      markCalibrationFinalized();
+      markCalibrationFinishConfirmed();
       const restored=await loadPublicRecord({finishingCalibration:true});
       if(!restored) throw new Error("Restore is still syncing. Tap Try again.");
       hideCustomerPageLoading();
     }catch(error){
-      if(setupCalibrationExpected()){
+      if(readCalibrationProgress()?.finishConfirmed===true){
+        // Management already confirmed Finish: show a retry, never calibration again.
+        closeCalibrationModal({force:true});
+        showCustomerPageLoadError(error?.message||"Restore is still syncing. Tap Try again.");
+      }else if(setupCalibrationExpected()){
         hideCustomerPageLoading();
         if(finishError){
           finishError.textContent=error?.message||"Could not finish calibration. Retry Finish setup.";
@@ -5298,6 +5320,12 @@ body.restore-page-ready:not(.setup-calibration-open){
 
   const loadPublicRecord = async ({finishingCalibration=false}={}) => {
     if(state.publicLoadBusy) return false;
+    const checkpoint=readCalibrationProgress();
+    // A previously clicked Finish (possibly with a lost response) resumes the
+    // activation handoff. It must never restart QR/NFC calibration.
+    if(checkpoint?.finishRequested===true && calibrationVerified(checkpoint)){
+      finishingCalibration=true;
+    }
     state.publicLoadBusy=true;
     showCustomerPageLoading(finishingCalibration?"Opening your Restore page":"Loading your Restore page",
       finishingCalibration?"Calibration complete. Retrieving your saved business profile…":"Checking your permanent QR and latest Management data…");
@@ -5311,9 +5339,22 @@ body.restore-page-ready:not(.setup-calibration-open){
     setPublicLoadStatus("Loading the latest QwerNFC record…","",false);
 
     try{
-      const lifecycle=await loadSetupLifecycleState();
-      if(!finishingCalibration && lifecycle==="ACTIVE" && setupCalibrationExpected()){
-        await reconcileFinishedCalibration();
+      let lifecycle=await loadSetupLifecycleState({preserveFinishing:finishingCalibration});
+      if(setupCalibrationExpected() && (lifecycle==="ACTIVE" || finishingCalibration)){
+        const reconciled=await reconcileFinishedCalibration();
+        if(reconciled) finishingCalibration=true;
+      }
+      if(finishingCalibration){
+        // Do not treat a stale SETUP_PENDING / SETUP_AVAILABLE response as a
+        // fresh setup after Management has already acknowledged Finish.
+        const confirmed=readCalibrationProgress()?.finishConfirmed===true;
+        if(!confirmed){
+          throw new Error("Finishing setup could not be confirmed yet. Tap Try again to resume.");
+        }
+        for(let attempt=0;attempt<3 && lifecycle!=="ACTIVE";attempt++){
+          await waitFor(1000);
+          lifecycle=await loadSetupLifecycleState({preserveFinishing:true});
+        }
       }
       // This browser owns only the unfinished session it created. If it was
       // abandoned for ten minutes, ask Management to perform a guarded reset
@@ -5327,6 +5368,7 @@ body.restore-page-ready:not(.setup-calibration-open){
         }
       }
       if(lifecycle!=="ACTIVE"||(!finishingCalibration && setupCalibrationExpected())){
+        if(finishingCalibration) throw new Error("Your setup is complete, but Management is still publishing Restore. Tap Try again shortly.");
         if(lifecycle==="ACTIVE") showSetupSynced();
         setPublicLoadStatus();
         if(!finishingCalibration) hideCustomerPageLoading();
@@ -5380,6 +5422,9 @@ body.restore-page-ready:not(.setup-calibration-open){
       protectedContent.classList.remove("hidden");
       publicView.classList.remove("hidden");
       editGate.classList.remove("hidden");
+      // Drop the calibration checkpoint only once both authenticated public
+      // route and customer profile exist and ACTIVE lifecycle is verified.
+      if(finishingCalibration && setupCalibrationExpected()) markCalibrationFinalized();
       releaseRestoreScrollLock();
       setPublicLoadStatus();
       hideCustomerPageLoading();
