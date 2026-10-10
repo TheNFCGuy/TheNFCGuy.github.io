@@ -5318,6 +5318,31 @@ body.restore-page-ready:not(.setup-calibration-open){
     linkMode:String(route?.linkMode || "both")
   });
 
+  const reopenStartAfterConfirmedReset = async (lifecycle, checkpoint) => {
+    if(lifecycle!=="SETUP_AVAILABLE" || !checkpoint ||
+      !Number.isFinite(Number(checkpoint.savedAt))) return false;
+    let route;
+    try{
+      route=await apiJson("/v1/public/qrs/"+encodeURIComponent(id)+"/route",{timeoutMs:3500});
+    }catch{
+      return false; // Failed network reads cannot authorize dropping calibration.
+    }
+    const changedAt=Date.parse(String(route?.updatedAt||route?.linkChangedAt||""));
+    if(route?.ok!==true || String(route.id||"").toUpperCase()!==id ||
+      route.enabled!==true || route.deleted===true ||
+      route.recoveryEnabled!==false ||
+      !Number.isFinite(changedAt) || changedAt<=Number(checkpoint.savedAt)){
+      return false;
+    }
+    clearSetupCalibrationMarker();
+    calibrationResumeAfterInterruption=false;
+    state.setupDraft=null;
+    state.publicProfileReady=false;
+    setPublicLoadStatus();
+    showSetupLifecycle("SETUP_AVAILABLE");
+    return true;
+  };
+
   const loadPublicRecord = async ({finishingCalibration=false}={}) => {
     if(state.publicLoadBusy) return false;
     const checkpoint=readCalibrationProgress();
@@ -5340,6 +5365,8 @@ body.restore-page-ready:not(.setup-calibration-open){
 
     try{
       let lifecycle=await loadSetupLifecycleState({preserveFinishing:finishingCalibration});
+      // An owner reset after this device's Finish checkpoint returns to Start.
+      if(await reopenStartAfterConfirmedReset(lifecycle,checkpoint)) return false;
       if(setupCalibrationExpected() && (lifecycle==="ACTIVE" || finishingCalibration)){
         const reconciled=await reconcileFinishedCalibration();
         if(reconciled) finishingCalibration=true;
