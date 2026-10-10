@@ -2631,6 +2631,28 @@ body.restore-page-ready:not(.setup-calibration-open){
 }
 @media(prefers-reduced-motion:reduce){.customer-page-loading-spinner{animation:none}}
 
+/* Optional permanent Web NFC locking in the Restore NFC dialog. */
+.restore-action-sheet{max-height:calc(100dvh - 30px);overflow-y:auto;overscroll-behavior:contain}
+.restore-nfc-protect-panel{display:grid;gap:10px;margin-top:15px;padding:16px;border:1px solid #2a9655;border-radius:17px;background:linear-gradient(160deg,#082d19,#05180d);text-align:left}
+.restore-nfc-protect-panel.hidden{display:none!important}
+.restore-nfc-protect-badge{font-size:.63rem;font-weight:900;letter-spacing:.08em;color:#60e89a}
+.restore-nfc-protect-panel h3{margin:0;color:#f0fff4;font-size:1.02rem}
+.restore-nfc-protect-panel p{margin:0;color:#a9c6b2;font-size:.79rem;line-height:1.5}
+.restore-nfc-protect-panel .restore-nfc-protect-warning{padding:10px 12px;border:1px solid #885f28;border-radius:11px;color:#ffd48b;background:#322511;font-weight:700}
+.restore-nfc-protect-check{display:flex;align-items:flex-start;gap:10px;color:#e1f3e5;font-size:.78rem;line-height:1.45}
+.restore-nfc-protect-check input{flex:none;margin:3px 0 0;accent-color:#31dc76;width:19px;height:19px}
+.restore-nfc-protect-phrase{display:grid;gap:6px;color:#d8eddf;font-size:.8rem}
+.restore-nfc-protect-phrase strong{color:#82f5aa}
+.restore-nfc-protect-phrase input{width:100%;min-height:44px;border:1px solid #427957;border-radius:10px;background:#02170b;color:#f4fff5;padding:10px 12px}
+.restore-nfc-protect-button{min-height:47px;border:1px solid #60eda0;border-radius:12px;background:#25bd64;color:#041909;font-size:.85rem;font-weight:900}
+.restore-nfc-protect-button:disabled{opacity:.6;cursor:wait}
+.restore-nfc-lock-status{min-height:18px;font-size:.77rem;line-height:1.5}
+.restore-nfc-protect-panel.is-locked{border-color:#65efa3}
+
+/* Permanent web NFC recovery: avoid accidental replacement of another managed card. */
+.restore-nfc-write-warning{margin:10px 0 0;padding:12px 13px;border-radius:12px;border:1px solid #835a20;background:#302211;color:#f6d8a1;font-size:.74rem;line-height:1.5}
+.restore-nfc-write-warning.hidden{display:none!important}
+
 </style>
 </head>
 <body>
@@ -3111,7 +3133,20 @@ body.restore-page-ready:not(.setup-calibration-open){
         <div class="restore-qr-frame" aria-hidden="true"></div>
         <button id="restore-qr-cancel" type="button">Cancel camera</button>
       </div>
-      <p id="restore-action-status" class="restore-action-status"></p>
+      <p id="restore-nfc-write-warning" class="restore-nfc-write-warning hidden">Write / Restore NFC overwrites the writable card you tap. Keep all OTHER NFC cards away, especially cards assigned to another QwerNFC ID. Chrome cannot restrict writing to a specific card. If Chrome reports an I/O error, use Read NFC to check the card before retrying.</p>
+      <p id="restore-action-status" class="restore-action-status" role="status" aria-live="polite"></p>
+      <section id="restore-nfc-protect-panel" class="restore-nfc-protect-panel hidden" aria-label="Permanent NFC write protection">
+        <span class="restore-nfc-protect-badge">VERIFIED NFC</span>
+        <h3>Protect this NFC card</h3>
+        <p>Optional, irreversible hardware protection. After locking, no ordinary NFC writing app — including QwerNFC — can physically rewrite this card. Its online destination can still change.</p>
+        <p class="restore-nfc-protect-warning">Only tap the SAME NFC card just verified. Keep every other NFC tag away. Locking the wrong card cannot be undone.</p>
+        <label class="restore-nfc-protect-check"><input type="checkbox" id="restore-nfc-lock-ack" /><span>I understand the NFC card will become permanently read-only.</span></label>
+        <label class="restore-nfc-protect-phrase">Type <strong id="restore-nfc-lock-phrase">LOCK QR</strong> to confirm
+          <input id="restore-nfc-lock-input" type="text" maxlength="20" spellcheck="false" autocomplete="off" autocapitalize="characters" placeholder="LOCK QR-002" />
+        </label>
+        <button id="restore-nfc-lock-confirm" class="restore-nfc-protect-button" type="button">Permanently protect NFC</button>
+        <p id="restore-nfc-lock-status" class="restore-nfc-lock-status" role="status" aria-live="polite"></p>
+      </section>
     </section>
   </div>
 
@@ -5318,6 +5353,9 @@ body.restore-page-ready:not(.setup-calibration-open){
     linkMode:String(route?.linkMode || "both")
   });
 
+  // A previous owner setup may have a locally persisted Finish checkpoint.
+  // Reuse it unless Management explicitly proves this QR was reset *after*
+  // that browser session. Never mistake delayed activation for an owner reset.
   const reopenStartAfterConfirmedReset = async (lifecycle, checkpoint) => {
     if(lifecycle!=="SETUP_AVAILABLE" || !checkpoint ||
       !Number.isFinite(Number(checkpoint.savedAt))) return false;
@@ -5365,7 +5403,8 @@ body.restore-page-ready:not(.setup-calibration-open){
 
     try{
       let lifecycle=await loadSetupLifecycleState({preserveFinishing:finishingCalibration});
-      // An owner reset after this device's Finish checkpoint returns to Start.
+      // Owner reset invalidates only older local calibration checkpoints.
+      // A live QR with an unfinished current calibration stays on that phase.
       if(await reopenStartAfterConfirmedReset(lifecycle,checkpoint)) return false;
       if(setupCalibrationExpected() && (lifecycle==="ACTIVE" || finishingCalibration)){
         const reconciled=await reconcileFinishedCalibration();
@@ -5819,11 +5858,49 @@ body.restore-page-ready:not(.setup-calibration-open){
   const restoreActionRead=document.getElementById("restore-action-read");
   const restoreActionWrite=document.getElementById("restore-action-write");
   const restoreActionStatus=document.getElementById("restore-action-status");
+  const restoreNfcProtectPanel=document.getElementById("restore-nfc-protect-panel");
+  const restoreNfcLockAck=document.getElementById("restore-nfc-lock-ack");
+  const restoreNfcLockInput=document.getElementById("restore-nfc-lock-input");
+  const restoreNfcLockConfirm=document.getElementById("restore-nfc-lock-confirm");
+  const restoreNfcLockStatus=document.getElementById("restore-nfc-lock-status");
   const restoreQrCamera=document.getElementById("restore-qr-camera");
   const restoreQrVideo=document.getElementById("restore-qr-video");
   const restoreQrCancel=document.getElementById("restore-qr-cancel");
   let restoreActionKind="qr";
   let stopActiveQrScan=null;
+  let restoreNfcVerifiedAt=0;
+  let restoreNfcLockBusy=false;
+  let restoreNfcLocked=false;
+  let restoreNfcWritePending=false;
+  let restoreNfcReadController=null;
+  // Chrome may report a transfer failure when the tag shifts before it
+  // finishes; never report success or rewrite automatically after an I/O error.
+  const webNfcErrorMessage=(error,operation="write")=>{
+    const name=String(error?.name||"");
+    const details=String(error?.message||"");
+    if(name==="AbortError") return "NFC operation cancelled. Tap again when ready.";
+    if(name==="NotAllowedError") return "Chrome NFC permission was denied or the action timed out. Keep this page open and tap the button again.";
+    if(name==="NotSupportedError") return "This NFC tag or phone cannot complete Web NFC. Try an NDEF-compatible writable NTAG213 card.";
+    if(name==="NotReadableError") return "Chrome cannot access NFC. Enable NFC, unlock the phone and close any other NFC writer app.";
+    if(name==="NetworkError" || /\bi\/o\b|input\/output|tag.lost|transf(er|erred)|transceiver/i.test(details)){
+      return "NFC I/O interrupted. Move other tags away, hold this tag steadily against the unlocked phone, then use Read NFC to check whether the write already succeeded before retrying.";
+    }
+    return details || (operation==="read"?"The NFC tag could not be read.":"The NFC tag could not be written.");
+  };
+  const webNfcCanLock=()=>globalThis.isSecureContext===true &&
+    typeof globalThis.NDEFReader==="function" &&
+    typeof globalThis.NDEFReader.prototype?.makeReadOnly==="function";
+  const resetRestoreNfcLock=()=>{
+    restoreNfcVerifiedAt=0;
+    restoreNfcLocked=false;
+    restoreNfcLockAck.checked=false;
+    restoreNfcLockInput.value="";
+    restoreNfcLockStatus.textContent="";
+    restoreNfcProtectPanel.classList.add("hidden");
+    restoreNfcProtectPanel.classList.remove("is-locked");
+    restoreNfcLockConfirm.disabled=false;
+    restoreNfcLockConfirm.textContent="Permanently protect NFC";
+  };
 
   const PERMANENT_PUBLIC_BASE="https://keishirogane1.github.io/permanent-qr-manager/";
   const permanentPublicBase=()=>new URL(PERMANENT_PUBLIC_BASE);
@@ -5843,12 +5920,22 @@ body.restore-page-ready:not(.setup-calibration-open){
   };
 
   const closeRestoreChoices=()=>{
+    if(restoreNfcLockBusy) return;
+    resetRestoreNfcLock();
+    restoreNfcWritePending=false;
+    restoreNfcReadController?.abort();
+    restoreNfcReadController=null;
     stopQrCamera();
     restoreActionLayer.classList.add("hidden");
     restoreActionStatus.textContent="";
   };
 
   const openRestoreChoices=(kind)=>{
+    if(restoreNfcLockBusy) return;
+    resetRestoreNfcLock();
+    restoreNfcWritePending=false;
+    restoreNfcReadController?.abort();
+    restoreNfcReadController=null;
     stopQrCamera();
     restoreActionKind=kind==="nfc"?"nfc":"qr";
     const qr=restoreActionKind==="qr";
@@ -5856,7 +5943,7 @@ body.restore-page-ready:not(.setup-calibration-open){
     restoreActionTitle.textContent=qr?"Choose QR action":"Choose NFC action";
     restoreActionCopy.textContent=qr
       ?"Read opens your phone camera and checks the existing QR. Write / Restore scans your permanent QwerNFC QR and restores the link saved in Management’s Recover QR tab for future scans."
-      :"Read opens Web NFC and reads the tag. Write / Restore waits for a writable NFC tag and restores its permanent QwerNFC identity.";
+      :"Read checks the current NFC tag. Write / Restore writes the stored permanent URL, then asks you to tap Read NFC again to verify before updating Management's online destination.";
     restoreActionRead.querySelector("strong").textContent=qr?"Read QR":"Read NFC";
     restoreActionRead.querySelector("small").textContent=qr
       ?"Open the camera and scan the existing QR."
@@ -5864,7 +5951,8 @@ body.restore-page-ready:not(.setup-calibration-open){
     restoreActionWrite.querySelector("strong").textContent=qr?"Write / Restore QR":"Write / Restore NFC";
     restoreActionWrite.querySelector("small").textContent=qr
       ?"Open the camera to confirm the label, then download the replacement permanent QR."
-      :"Tap a writable NFC tag and restore the permanent NFC identity.";
+      :"Write the permanent NFC identity, then tap Read NFC to verify the same card.";
+    document.getElementById("restore-nfc-write-warning")?.classList.toggle("hidden",qr);
     restoreActionStatus.textContent="";
     restoreActionLayer.classList.remove("hidden");
   };
@@ -5993,15 +6081,18 @@ body.restore-page-ready:not(.setup-calibration-open){
     if(typeof globalThis.NDEFReader!=="function") {
       throw new Error("Web NFC is not available. Open this HTTPS page in Chrome on an Android phone with NFC enabled.");
     }
+    restoreNfcVerifiedAt=0;
+    restoreNfcProtectPanel.classList.add("hidden");
     restoreActionStatus.textContent="Waiting for NFC tag…";
     const reader=new globalThis.NDEFReader();
     const controller=new AbortController();
+    restoreNfcReadController=controller;
     const timeout=setTimeout(()=>controller.abort(),45000);
     try{
       const result=await new Promise(async(resolve,reject)=>{
         const onAbort=()=>reject(new DOMException("Cancelled","AbortError"));
         controller.signal.addEventListener("abort",onAbort,{once:true});
-        reader.addEventListener("readingerror",()=>reject(new Error("The NFC tag could not be read.")),{once:true});
+        reader.addEventListener("readingerror",()=>reject(new Error("NFC I/O read failed. Keep the phone unlocked, hold one NFC tag steadily in place and tap Read NFC again.")),{once:true});
         reader.addEventListener("reading",(event)=>resolve(event),{once:true});
         try{await reader.scan({signal:controller.signal})}catch(error){reject(error)}
       });
@@ -6011,7 +6102,50 @@ body.restore-page-ready:not(.setup-calibration-open){
       const expected=permanentNfcValue();
       const managed=normalizedHttpUrl(state.route?.destination);
       if(value===expected){
+        restoreNfcVerifiedAt=Date.now();
+        restoreNfcLockAck.checked=false;
+        restoreNfcLockInput.value="";
+        restoreNfcLockStatus.textContent=webNfcCanLock()
+          ? "Verified. Optional protection is available on this SAME card for 60 seconds."
+          : "Permanent locking requires Chrome for Android with Web NFC makeReadOnly() over HTTPS.";
+        document.getElementById("restore-nfc-lock-phrase").textContent="LOCK "+id;
+        restoreNfcLockConfirm.disabled=!webNfcCanLock();
+        restoreNfcProtectPanel.classList.remove("hidden");
         restoreActionStatus.textContent="NFC read successfully. Its permanent QwerNFC identity is correct and resolves to the Managed Link.";
+        if(restoreNfcWritePending){
+          // Only a separate physical read of the stored permanent URL may
+          // trigger the backend restore. A successful write Promise alone is
+          // not proof that the tag now contains the correct identity.
+          restoreActionStatus.textContent="Permanent NFC identity verified. Restoring the saved Management destination…";
+          const latestRoute=await loadRequiredPublicRoute();
+          const backup=String(latestRoute?.fallbackDestination||"").trim();
+          state.route.recoveryDestination=backup;
+          currentLink.textContent=maskedManagedLink(backup);
+          if(!normalizedHttpUrl(backup)){
+            restoreNfcWritePending=false;
+            restoreActionStatus.textContent="Permanent NFC URL written and verified. No emergency backup destination is configured yet; ask the admin to set one in Recover QR. No online link was changed.";
+          }else{
+            try{
+              const outcome=await apiJson("/v1/public/qrs/"+encodeURIComponent(id)+"/restore-nfc",{
+                method:"POST",timeoutMs:30000,body:{scannedNfc:expected,expectedLink:backup}
+              });
+              if(outcome?.restored!==true || outcome?.routingSynced!==true){
+                throw new Error("Management did not confirm live route restoration.");
+              }
+              restoreNfcWritePending=false;
+              state.lastRestoreManagementSynced=outcome?.managementSynced===true;
+              restoreActionStatus.textContent=state.lastRestoreManagementSynced
+                ?"NFC verified. The saved backup link has been restored in Management and public routing."
+                :"NFC verified. Public routing was restored through failback; Management will reconcile.";
+              void refreshRestoreManagedLink().catch(()=>{});
+            }catch(error){
+              // Keep pending for a repeat Read NFC. Never rewrite the card just
+              // because the remote API or router is temporarily unavailable.
+              throw new Error("NFC tag verified, but the online restore is not confirmed: "+
+                (error?.message||"Retry Read NFC; do not rewrite the tag."));
+            }
+          }
+        }
       }else if(managed && value===managed){
         restoreActionStatus.textContent="This NFC tag contains the Managed Link directly. Use Write / Restore NFC to restore the permanent QwerNFC identity.";
       }else{
@@ -6020,39 +6154,33 @@ body.restore-page-ready:not(.setup-calibration-open){
     }finally{
       clearTimeout(timeout);
       try{controller.abort()}catch{}
+      if(restoreNfcReadController===controller)restoreNfcReadController=null;
     }
   };
 
   const writeNfcFromWeb=async()=>{
     if(state.route?.enabled!==true || state.route?.deleted===true) throw new Error("This QwerNFC record is unavailable.");
-    if(typeof globalThis.NDEFReader!=="function") {
-      throw new Error("Web NFC writing is not available. Open this HTTPS page in Chrome on an Android phone with NFC enabled.");
+    if(typeof globalThis.NDEFReader!=="function"){
+      throw new Error("Web NFC needs HTTPS and Chrome on an NFC-enabled Android phone.");
     }
-    const latestRoute=await loadRequiredPublicRoute();
-    const expectedLink=String(latestRoute?.fallbackDestination || "").trim();
-    state.route.recoveryDestination=expectedLink;
-    currentLink.textContent=maskedManagedLink(expectedLink);
-    if(!normalizedHttpUrl(expectedLink)) throw new Error("No valid Recover QR backup link is configured. Ask the admin to save it in Recover QR.");
+    // Important: call write() synchronously on the user's button gesture.
+    // No route fetch, timer or awaited work is allowed before write().
+    // The stored permanent address is immutable; never write a destination.
     const value=permanentNfcValue();
-    restoreActionStatus.textContent="Tap the writable NFC tag and hold the phone still…";
+    if(!normalizedHttpUrl(value)) throw new Error("The permanent QwerNFC NFC identity is invalid.");
+    restoreNfcWritePending=false;
     const writer=new globalThis.NDEFReader();
-    await writer.write({records:[{recordType:"url",data:value}]});
-    try{
-      const result=await apiJson("/v1/public/qrs/"+encodeURIComponent(id)+"/restore-nfc",{
-        method:"POST",timeoutMs:30000,body:{scannedNfc:value,expectedLink}
-      });
-      if(result?.restored!==true || result?.routingSynced!==true) throw new Error("Scan routing has not confirmed Restore.");
-      state.lastRestoreManagementSynced=result?.managementSynced===true;
-    }catch(error){
-      throw new Error("The NFC tag was written, but its link restoration is incomplete. "+(error?.message||"Try Restore again."));
-    }
-    await refreshRestoreManagedLink();
-    restoreActionStatus.textContent=state.lastRestoreManagementSynced===true
-      ?"NFC restored from Recover QR. Management and scan routing now use the saved recovery link."
-      :"NFC restored through GitHub failback. The tag keeps its permanent identity and Management will reconcile when it reconnects.";
+    const physicalWrite=writer.write({records:[{recordType:"url",data:value}]},{overwrite:true});
+    restoreActionStatus.textContent="Waiting for your writable NFC card… Keep only the intended tag near the unlocked phone until Chrome completes the write.";
+    await physicalWrite;
+    restoreNfcWritePending=true;
+    restoreActionRead.querySelector("strong").textContent="Verify written NFC";
+    restoreActionRead.querySelector("small").textContent="Tap the SAME card again to verify its permanent URL and finish online recovery.";
+    restoreActionStatus.textContent="NFC write reported success. Now tap Verify written NFC and hold the SAME card still to check the actual URL before updating your online backup destination.";
   };
 
   const runWebRestoreAction=async(mode)=>{
+    if(restoreNfcLockBusy) return;
     restoreActionRead.disabled=true;
     restoreActionWrite.disabled=true;
     try{
@@ -6064,13 +6192,65 @@ body.restore-page-ready:not(.setup-calibration-open){
         else await writeNfcFromWeb();
       }
     }catch(error){
-      if(error?.name==="AbortError") restoreActionStatus.textContent="Operation cancelled.";
-      else restoreActionStatus.textContent=error?.message || "Restore action failed.";
+      const uncertainWrite=restoreActionKind==="nfc" && mode==="write" &&
+        (error?.name==="NetworkError" || /\\bi\\/o\\b|input\\/output|tag.lost/i.test(String(error?.message||"")));
+      if(uncertainWrite){
+        // NetworkError does not tell us whether bytes were written.
+        // A fresh matching physical Read is the ONLY way to confirm.
+        restoreNfcWritePending=true;
+        restoreActionRead.querySelector("strong").textContent="Verify written NFC";
+        restoreActionRead.querySelector("small").textContent="Check whether the interrupted write already saved the correct permanent URL.";
+      }
+      restoreActionStatus.textContent=restoreActionKind==="nfc"
+        ? webNfcErrorMessage(error,mode)
+        : (error?.name==="AbortError"?"Operation cancelled.":error?.message||"Restore action failed.");
     }finally{
       restoreActionRead.disabled=false;
       restoreActionWrite.disabled=false;
     }
   };
+
+  // Chrome's makeReadOnly() physically locks whatever NFC tag is tapped.
+  // There is no tag selector in Web NFC; require a fresh exact-value read and
+  // explicit consent, and instruct the customer to isolate that same card.
+  // The API must be invoked directly from the confirmation click.
+  restoreNfcLockConfirm.addEventListener("click",async()=>{
+    if(restoreNfcLockBusy) return;
+    const phrase=String(restoreNfcLockInput.value||"").trim().toUpperCase();
+    if(restoreActionKind!=="nfc" || restoreActionLayer.classList.contains("hidden") ||
+      state.route?.enabled!==true || state.route?.deleted===true ||
+      restoreNfcVerifiedAt<=0 || Date.now()-restoreNfcVerifiedAt>60000 ||
+      restoreNfcLocked || !webNfcCanLock()){
+      restoreNfcLockStatus.textContent="Use Read NFC to verify the permanent card again, then protect it within 60 seconds using Chrome for Android.";
+      return;
+    }
+    if(!restoreNfcLockAck.checked || phrase!=="LOCK "+id){
+      restoreNfcLockStatus.textContent="Acknowledge the irreversible lock and type LOCK "+id+" exactly.";
+      return;
+    }
+    restoreNfcLockBusy=true;
+    restoreNfcLockConfirm.disabled=true;
+    restoreActionRead.disabled=true;
+    restoreActionWrite.disabled=true;
+    restoreNfcLockStatus.textContent="Tap ONLY the same verified NFC card. Keep other cards away until Chrome confirms the lock…";
+    try{
+      const reader=new globalThis.NDEFReader();
+      await reader.makeReadOnly();
+      restoreNfcLocked=true;
+      restoreNfcVerifiedAt=0;
+      restoreNfcProtectPanel.classList.add("is-locked");
+      restoreNfcLockConfirm.textContent="NFC permanently read-only";
+      restoreNfcLockStatus.textContent="Chrome confirmed permanent read-only protection. Ordinary NFC apps, including QwerNFC, cannot rewrite this physical tag. Its online destination remains editable.";
+      restoreActionStatus.textContent="NFC hardware lock confirmed. Its permanent URL was not changed.";
+    }catch(error){
+      restoreNfcLockStatus.textContent=(error?.message||"Chrome could not lock this NFC tag.")+" Lock not confirmed. Do not assume this card is protected.";
+    }finally{
+      restoreNfcLockBusy=false;
+      restoreActionRead.disabled=false;
+      restoreActionWrite.disabled=false;
+      restoreNfcLockConfirm.disabled=restoreNfcLocked;
+    }
+  });
 
   document.getElementById("open-public-qr").addEventListener("click",()=>openRestoreChoices("qr"));
   document.getElementById("open-public-nfc").addEventListener("click",()=>openRestoreChoices("nfc"));
@@ -6080,7 +6260,11 @@ body.restore-page-ready:not(.setup-calibration-open){
     if(event.target===restoreActionLayer) closeRestoreChoices();
   });
   restoreActionRead.addEventListener("click",()=>void runWebRestoreAction("read"));
-  restoreActionWrite.addEventListener("click",()=>void runWebRestoreAction("write"));
+  restoreActionWrite.addEventListener("click",()=>{
+    // UI state is separate from the core Restore writer and its routing checks.
+    if(restoreActionKind==="nfc") resetRestoreNfcLock();
+    void runWebRestoreAction("write");
+  });
 
   let recoveryLinkRefreshBusy=false;
   const refreshRestoreManagedLink=async()=>{
