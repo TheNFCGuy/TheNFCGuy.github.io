@@ -5882,7 +5882,8 @@ body.restore-page-ready:not(.setup-calibration-open){
     if(name==="NotAllowedError") return "Chrome NFC permission was denied or the action timed out. Keep this page open and tap the button again.";
     if(name==="NotSupportedError") return "This NFC tag or phone cannot complete Web NFC. Try an NDEF-compatible writable NTAG213 card.";
     if(name==="NotReadableError") return "Chrome cannot access NFC. Enable NFC, unlock the phone and close any other NFC writer app.";
-    if(name==="NetworkError" || /\bi\/o\b|input\/output|tag.lost|transf(er|erred)|transceiver/i.test(details)){
+    const lower=details.toLowerCase();
+    if(name==="NetworkError" || ["i/o","input/output","tag lost","transfer failed","transceiver"].some(word=>lower.includes(word))){
       return "NFC I/O interrupted. Move other tags away, hold this tag steadily against the unlocked phone, then use Read NFC to check whether the write already succeeded before retrying.";
     }
     return details || (operation==="read"?"The NFC tag could not be read.":"The NFC tag could not be written.");
@@ -6168,6 +6169,11 @@ body.restore-page-ready:not(.setup-calibration-open){
     // The stored permanent address is immutable; never write a destination.
     const value=permanentNfcValue();
     if(!normalizedHttpUrl(value)) throw new Error("The permanent QwerNFC NFC identity is invalid.");
+    // Use the already loaded route snapshot. Never await a network fetch
+    // between the button gesture and Chrome's write() call.
+    if(!normalizedHttpUrl(state.route?.recoveryDestination)){
+      throw new Error("No Recover QR backup link is configured. Ask the admin to save it before writing an NFC replacement.");
+    }
     restoreNfcWritePending=false;
     const writer=new globalThis.NDEFReader();
     const physicalWrite=writer.write({records:[{recordType:"url",data:value}]},{overwrite:true});
@@ -6192,8 +6198,10 @@ body.restore-page-ready:not(.setup-calibration-open){
         else await writeNfcFromWeb();
       }
     }catch(error){
+      const ioDetails=String(error?.message||"").toLowerCase();
       const uncertainWrite=restoreActionKind==="nfc" && mode==="write" &&
-        (error?.name==="NetworkError" || /\\bi\\/o\\b|input\\/output|tag.lost/i.test(String(error?.message||"")));
+        (error?.name==="NetworkError" ||
+        ["i/o","input/output","tag lost","transfer failed"].some(word=>ioDetails.includes(word)));
       if(uncertainWrite){
         // NetworkError does not tell us whether bytes were written.
         // A fresh matching physical Read is the ONLY way to confirm.
