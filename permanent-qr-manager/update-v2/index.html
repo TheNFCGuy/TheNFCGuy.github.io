@@ -2653,6 +2653,40 @@ body.restore-page-ready:not(.setup-calibration-open){
 .restore-nfc-write-warning{margin:10px 0 0;padding:12px 13px;border-radius:12px;border:1px solid #835a20;background:#302211;color:#f6d8a1;font-size:.74rem;line-height:1.5}
 .restore-nfc-write-warning.hidden{display:none!important}
 
+/* NFC hardware protection is a one-way operation, not a reversible toggle. */
+.nfc-security-card{width:100%;min-width:0;box-sizing:border-box;padding:12px;border:1px solid #277b42;border-radius:16px;background:linear-gradient(160deg,#052315,#03170d);text-align:left}
+.nfc-security-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer}
+.nfc-security-copy{display:grid;gap:3px;min-width:0}
+.nfc-security-copy strong{color:#ecfff1;font-size:.84rem;font-weight:850}
+.nfc-security-copy small{color:#a6cfb1;font-size:.67rem}
+.nfc-security-switch{flex:0 0 48px;width:48px;height:27px;position:relative}
+.nfc-security-switch input{position:absolute;inset:0;width:100%;height:100%;opacity:0;z-index:1;cursor:pointer;margin:0}
+.nfc-security-switch i{display:block;width:100%;height:100%;background:#334c3b;border:1px solid #617b67;border-radius:99px;position:relative;transition:.2s}
+.nfc-security-switch i::after{content:"";position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;background:#e1e8e2;transition:.2s}
+.nfc-security-switch input:checked+i{background:#139d51;border-color:#3df18a}
+.nfc-security-switch input:checked+i::after{transform:translateX(21px);background:#fff}
+.nfc-security-switch input:focus-visible+i{outline:3px solid #d2ffdf;outline-offset:3px}
+.nfc-security-switch input:disabled+i{opacity:.77}
+.nfc-security-explanation{font-size:.68rem;line-height:1.5;color:#b0cdb9;margin:9px 0 8px}
+.nfc-security-explanation strong{color:#f8ca82}
+.nfc-security-state{font-size:.67rem;line-height:1.4;color:#7ceb9d;font-weight:800;margin:0}
+.nfc-security-confirm{display:grid;gap:9px;margin-top:11px;padding-top:11px;border-top:1px solid #24653b}
+.nfc-security-confirm.hidden{display:none!important}
+.nfc-security-read,.nfc-security-confirm-button{width:100%;min-height:43px;border:1px solid #36c875;border-radius:10px;background:#0b4728;color:#f1fff5;font-weight:800;font-size:.72rem}
+.nfc-security-confirm-button{background:#20bc67;color:#02140a;border-color:#39e78b}
+.nfc-security-read:disabled,.nfc-security-confirm-button:disabled{opacity:.6}
+.nfc-security-ack{display:flex;align-items:flex-start;gap:9px;font-size:.69rem;line-height:1.42;color:#e7f9ec}
+.nfc-security-ack input{accent-color:#32d77b;flex-shrink:0;width:17px;height:17px}
+.nfc-security-phrase{display:grid;gap:7px;font-size:.7rem;color:#bfe6cc}
+.nfc-security-phrase input{width:100%;min-width:0;box-sizing:border-box;padding:11px;border:1px solid #337549;border-radius:10px;background:#021108;color:white;font-size:.78rem}
+.nfc-security-message{font-size:.66rem;line-height:1.5;color:#edc47a;margin:0}
+.setup-calibrated-card{overflow-y:auto!important;overscroll-behavior:contain;gap:8px;max-height:calc(100dvh - 24px)}
+.setup-calibrated-rings{width:clamp(85px,16dvh,140px);height:clamp(85px,16dvh,140px)}
+.setup-calibrated-checklist{gap:6px;padding:10px}
+.setup-calibrated-card .setup-nfc-security{margin-top:2px}
+.restore-nfc-security{margin:12px 0}
+@media(max-height:660px){.setup-calibrated-card{padding:12px}.setup-calibrated-rings{width:82px;height:82px}}
+
 </style>
 </head>
 <body>
@@ -2837,7 +2871,19 @@ body.restore-page-ready:not(.setup-calibration-open){
           <div><span class="setup-calibrated-list-check">✓</span><span><strong>QR verified</strong><small>Permanent code unchanged</small></span></div>
           <div><span class="setup-calibrated-list-check">✓</span><span><strong>NFC verified</strong><small>Managed link connected</small></span></div>
         </div>
-        <button type="button" id="setup-calibrated-view" class="setup-primary setup-activation-main-button">Finish setup</button>
+        <section class="nfc-security-card setup-nfc-security" aria-label="Optional NFC protection">
+  <label class="nfc-security-toggle"><span class="nfc-security-copy"><strong>Secure NFC card</strong><small>Optional, permanent hardware protection</small></span><span class="nfc-security-switch"><input id="setup-nfc-protection-toggle" type="checkbox" role="switch" aria-describedby="setup-nfc-protection-explanation" /><i aria-hidden="true"></i></span></label>
+  <p id="setup-nfc-protection-explanation" class="nfc-security-explanation">OFF: keep the NFC card writable for future repairs. ON: verify and permanently lock the card so no NFC app can rewrite it, including QwerNFC. The online destination can still change. <strong>A locked card cannot be unlocked, even by switching OFF.</strong></p>
+  <p id="setup-nfc-protection-state" class="nfc-security-state" role="status" aria-live="polite">OFF · Protection not requested</p>
+  <div id="setup-nfc-protection-controls" class="nfc-security-confirm hidden">
+    <button id="setup-nfc-protection-read" class="nfc-security-read" type="button">1 · Read and verify NFC</button>
+    <label class="nfc-security-ack"><input type="checkbox" id="setup-nfc-protection-ack" /><span>I understand my NFC card will become permanently read-only and cannot be restored by rewriting.</span></label>
+    <label class="nfc-security-phrase">2 · Type <strong id="setup-nfc-protection-expected">LOCK QR</strong> to confirm <input id="setup-nfc-protection-phrase" type="text" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="LOCK QR-002" /></label>
+    <button id="setup-nfc-protection-confirm" class="nfc-security-confirm-button" type="button">Permanently secure NFC</button>
+    <p id="setup-nfc-protection-message" class="nfc-security-message" role="status" aria-live="polite">Keep every other NFC card away before locking.</p>
+  </div>
+</section>
+<button type="button" id="setup-calibrated-view" class="setup-primary setup-activation-main-button">Complete setup</button>
         <p id="setup-finish-error" class="setup-calibration-status hidden" role="alert"></p>
       </section>
     </div>
@@ -3108,6 +3154,11 @@ body.restore-page-ready:not(.setup-calibration-open){
     </button>
   </div>
 
+  <section class="nfc-security-card restore-nfc-security" aria-label="Secure NFC from Restore">
+    <label class="nfc-security-toggle"><span class="nfc-security-copy"><strong>Secure NFC</strong><small>Optional physical write protection</small></span><span class="nfc-security-switch"><input type="checkbox" id="restore-nfc-security-toggle" role="switch" aria-describedby="restore-nfc-security-explanation" /><i aria-hidden="true"></i></span></label>
+    <p id="restore-nfc-security-explanation" class="nfc-security-explanation">Turn ON to read and verify the NFC card before optionally locking it. OFF cancels before locking, but <strong>cannot unlock a permanently protected card.</strong> The online destination remains editable.</p>
+    <p id="restore-nfc-security-state" class="nfc-security-state" role="status" aria-live="polite">OFF · Protection not requested (hardware state unknown)</p>
+  </section>
   <div id="restore-action-layer" class="restore-action-layer hidden" role="dialog" aria-modal="true" aria-labelledby="restore-action-title">
     <section class="restore-action-sheet">
       <div class="restore-action-head">
@@ -4669,6 +4720,7 @@ body.restore-page-ready:not(.setup-calibration-open){
       qrVerified:patch.qrVerified===undefined?Boolean(old.qrVerified):Boolean(patch.qrVerified),
       nfcWritten:patch.nfcWritten===undefined?Boolean(old.nfcWritten):Boolean(patch.nfcWritten),
       nfcVerified:patch.nfcVerified===undefined?Boolean(old.nfcVerified):Boolean(patch.nfcVerified),
+      nfcProtectionLocked:patch.nfcProtectionLocked===undefined?Boolean(old.nfcProtectionLocked):Boolean(patch.nfcProtectionLocked),
       finishRequested:patch.finishRequested===undefined?Boolean(old.finishRequested):Boolean(patch.finishRequested),
       finishConfirmed:patch.finishConfirmed===undefined?Boolean(old.finishConfirmed):Boolean(patch.finishConfirmed)
     };
@@ -4707,6 +4759,113 @@ body.restore-page-ready:not(.setup-calibration-open){
   let calibrationTransitionTimer=null;
   let calibrationNfcFinalizing=false;
   let calibrationSession=0;
+  // A switch only requests protection. The physical card changes ONLY after
+  // a fresh matching read, explicit acknowledgement and a separate lock tap.
+  const setupNfcProtectionToggle=document.getElementById("setup-nfc-protection-toggle");
+  const setupNfcProtectionControls=document.getElementById("setup-nfc-protection-controls");
+  const setupNfcProtectionState=document.getElementById("setup-nfc-protection-state");
+  const setupNfcProtectionMessage=document.getElementById("setup-nfc-protection-message");
+  const setupNfcProtectionRead=document.getElementById("setup-nfc-protection-read");
+  const setupNfcProtectionAck=document.getElementById("setup-nfc-protection-ack");
+  const setupNfcProtectionPhrase=document.getElementById("setup-nfc-protection-phrase");
+  const setupNfcProtectionConfirm=document.getElementById("setup-nfc-protection-confirm");
+  let setupNfcProtectionVerifiedAt=0;
+  let setupNfcProtectionBusy=false;
+  let setupNfcProtectionController=null;
+  const setupNfcProtectionLocked=()=>readCalibrationProgress()?.nfcProtectionLocked===true;
+  const resetSetupNfcProtectionProof=()=>{
+    setupNfcProtectionVerifiedAt=0;
+    setupNfcProtectionController?.abort();
+    setupNfcProtectionController=null;
+    setupNfcProtectionAck.checked=false;
+    setupNfcProtectionPhrase.value="";
+  };
+  const renderSetupNfcProtection=()=>{
+    const locked=setupNfcProtectionLocked();
+    if(locked) setupNfcProtectionToggle.checked=true;
+    setupNfcProtectionToggle.disabled=locked||setupNfcProtectionBusy;
+    setupNfcProtectionControls.classList.toggle("hidden",locked||!setupNfcProtectionToggle.checked);
+    setupNfcProtectionRead.disabled=setupNfcProtectionBusy;
+    setupNfcProtectionConfirm.disabled=setupNfcProtectionBusy;
+    document.getElementById("setup-nfc-protection-expected").textContent="LOCK "+id;
+    setupNfcProtectionState.textContent=locked
+      ?"ON · Physical NFC lock confirmed (cannot be switched off)"
+      :setupNfcProtectionToggle.checked
+        ?"ON · Protection pending NFC verification and confirmation"
+        :"OFF · Protection not requested";
+  };
+  setupNfcProtectionToggle.addEventListener("change",()=>{
+    if(setupNfcProtectionLocked()){setupNfcProtectionToggle.checked=true;renderSetupNfcProtection();return;}
+    resetSetupNfcProtectionProof();
+    setupNfcProtectionMessage.textContent=setupNfcProtectionToggle.checked
+      ?"Read the card again, then confirm the irreversible lock. Keep all other NFC cards away."
+      :"No hardware locking was requested.";
+    renderSetupNfcProtection();
+  });
+  setupNfcProtectionRead.addEventListener("click",async()=>{
+    if(!setupNfcProtectionToggle.checked||setupNfcProtectionLocked()||setupNfcProtectionBusy) return;
+    resetSetupNfcProtectionProof();
+    if(!globalThis.isSecureContext||typeof globalThis.NDEFReader!=="function"){
+      setupNfcProtectionMessage.textContent="Chrome on an NFC-enabled Android phone over HTTPS is required.";
+      return;
+    }
+    setupNfcProtectionBusy=true;
+    renderSetupNfcProtection();
+    setupNfcProtectionMessage.textContent="Tap ONLY the NFC card for "+id+" to verify its permanent identity…";
+    const controller=new AbortController();
+    setupNfcProtectionController=controller;
+    const timer=setTimeout(()=>controller.abort(),45000);
+    try{
+      const reader=new globalThis.NDEFReader();
+      const detected=new Promise((resolve,reject)=>{
+        controller.signal.addEventListener("abort",()=>reject(new Error("NFC read timed out. Please retry.")),{once:true});
+        reader.addEventListener("reading",(event)=>resolve(decodeNfcUrl(event)),{once:true});
+        reader.addEventListener("readingerror",()=>reject(new Error("NFC I/O error. Keep only one tag steady and retry.")),{once:true});
+      });
+      await reader.scan({signal:controller.signal});
+      const value=await detected;
+      if(value!==expectedSetupNfc) throw new Error("Wrong NFC card: expected "+id+". No lock was attempted.");
+      setupNfcProtectionVerifiedAt=Date.now();
+      setupNfcProtectionMessage.textContent="Correct NFC verified. Confirm and tap this SAME card within 60 seconds.";
+    }catch(error){
+      setupNfcProtectionVerifiedAt=0;
+      setupNfcProtectionMessage.textContent=error?.message||"NFC verification failed. No lock attempted.";
+    }finally{
+      clearTimeout(timer);
+      controller.abort();
+      if(setupNfcProtectionController===controller) setupNfcProtectionController=null;
+      setupNfcProtectionBusy=false;
+      renderSetupNfcProtection();
+    }
+  });
+  setupNfcProtectionConfirm.addEventListener("click",async()=>{
+    if(setupNfcProtectionBusy||!setupNfcProtectionToggle.checked||setupNfcProtectionLocked()) return;
+    if(!globalThis.isSecureContext||typeof globalThis.NDEFReader?.prototype?.makeReadOnly!=="function"||
+      setupNfcProtectionVerifiedAt<=0||Date.now()-setupNfcProtectionVerifiedAt>60000){
+      setupNfcProtectionMessage.textContent="Read the permanent NFC card again within 60 seconds in Chrome for Android.";
+      return;
+    }
+    if(!setupNfcProtectionAck.checked||setupNfcProtectionPhrase.value.trim().toUpperCase()!=="LOCK "+id){
+      setupNfcProtectionMessage.textContent="Check the irreversible-lock warning and type LOCK "+id+" exactly.";
+      return;
+    }
+    setupNfcProtectionBusy=true;
+    renderSetupNfcProtection();
+    setupNfcProtectionMessage.textContent="Tap ONLY the same verified card. An NFC hardware lock cannot be undone…";
+    try{
+      const reader=new globalThis.NDEFReader();
+      await reader.makeReadOnly();
+      setupNfcProtectionVerifiedAt=0;
+      persistCalibrationProgress({nfcProtectionLocked:true,touch:true});
+      setupNfcProtectionMessage.textContent="Chrome confirmed the permanent NFC hardware lock. Online destination changes still work.";
+    }catch(error){
+      setupNfcProtectionVerifiedAt=0;
+      setupNfcProtectionMessage.textContent=(error?.message||"NFC lock failed.")+" Lock NOT confirmed. Read the card again before retrying.";
+    }finally{
+      setupNfcProtectionBusy=false;
+      renderSetupNfcProtection();
+    }
+  });
   const stopCalibrationTransition=()=>{
     if(calibrationTransitionTimer!==null){
       clearTimeout(calibrationTransitionTimer);
@@ -5099,6 +5258,9 @@ body.restore-page-ready:not(.setup-calibration-open){
     // The QR/NFC routing values themselves are never changed here.
     // Keep verified completion across background/refresh until Finish setup.
     setupDonePanel?.classList.add("hidden");
+    resetSetupNfcProtectionProof();
+    if(!setupNfcProtectionLocked()) setupNfcProtectionToggle.checked=false;
+    renderSetupNfcProtection();
     calibrationSuccessLayer.classList.remove("hidden");
     calibrationSuccessLayer.setAttribute("aria-hidden","false");
     document.body.classList.add("setup-calibration-open");
@@ -5221,7 +5383,13 @@ body.restore-page-ready:not(.setup-calibration-open){
   calibrationNfcVerifyButton?.addEventListener("click",()=>void beginNfcVerify());
   let calibrationFinishBusy=false;
   document.getElementById("setup-calibrated-view")?.addEventListener("click",async()=>{
-    if(calibrationFinishBusy) return;
+    if(calibrationFinishBusy||setupNfcProtectionBusy) return;
+    if(setupNfcProtectionToggle.checked&&!setupNfcProtectionLocked()){
+      const error=document.getElementById("setup-finish-error");
+      error.textContent="Secure NFC is ON but hardware protection is not confirmed. Complete the lock or switch OFF to finish without protection.";
+      error.classList.remove("hidden");
+      return;
+    }
     const progress=readCalibrationProgress();
     if(!calibrationVerified(progress)){
       calibrationMessage("Verify the permanent QR and physically read back the NFC card before finishing.","error");
@@ -5863,6 +6031,21 @@ body.restore-page-ready:not(.setup-calibration-open){
   const restoreNfcLockInput=document.getElementById("restore-nfc-lock-input");
   const restoreNfcLockConfirm=document.getElementById("restore-nfc-lock-confirm");
   const restoreNfcLockStatus=document.getElementById("restore-nfc-lock-status");
+  const restoreNfcSecurityToggle=document.getElementById("restore-nfc-security-toggle");
+  const restoreNfcSecurityState=document.getElementById("restore-nfc-security-state");
+  let restoreNfcHardwareProtected=false;
+  const renderRestoreNfcSecurity=()=>{
+    if(restoreNfcHardwareProtected){
+      restoreNfcSecurityToggle.checked=true;
+      restoreNfcSecurityToggle.disabled=true;
+      restoreNfcSecurityState.textContent="ON · Hardware protection permanently confirmed during this session";
+    }else{
+      restoreNfcSecurityToggle.disabled=false;
+      restoreNfcSecurityState.textContent=restoreNfcSecurityToggle.checked
+        ?"ON · Read the NFC card in the opened panel to continue"
+        :"OFF · Protection not requested (physical hardware status unknown)";
+    }
+  };
   const restoreQrCamera=document.getElementById("restore-qr-camera");
   const restoreQrVideo=document.getElementById("restore-qr-video");
   const restoreQrCancel=document.getElementById("restore-qr-cancel");
@@ -5922,6 +6105,8 @@ body.restore-page-ready:not(.setup-calibration-open){
 
   const closeRestoreChoices=()=>{
     if(restoreNfcLockBusy) return;
+    if(!restoreNfcHardwareProtected) restoreNfcSecurityToggle.checked=false;
+    renderRestoreNfcSecurity();
     resetRestoreNfcLock();
     restoreNfcWritePending=false;
     restoreNfcReadController?.abort();
@@ -6245,6 +6430,8 @@ body.restore-page-ready:not(.setup-calibration-open){
       const reader=new globalThis.NDEFReader();
       await reader.makeReadOnly();
       restoreNfcLocked=true;
+      restoreNfcHardwareProtected=true;
+      renderRestoreNfcSecurity();
       restoreNfcVerifiedAt=0;
       restoreNfcProtectPanel.classList.add("is-locked");
       restoreNfcLockConfirm.textContent="NFC permanently read-only";
@@ -6260,6 +6447,22 @@ body.restore-page-ready:not(.setup-calibration-open){
     }
   });
 
+  restoreNfcSecurityToggle.addEventListener("change",()=>{
+    // A switch is only an opt-in to the existing guarded NFC modal.
+    // It cannot physically unlock a card after makeReadOnly() succeeds.
+    if(restoreNfcHardwareProtected){
+      restoreNfcSecurityToggle.checked=true;
+      renderRestoreNfcSecurity();
+      return;
+    }
+    if(restoreNfcSecurityToggle.checked){
+      openRestoreChoices("nfc");
+      restoreActionStatus.textContent="Secure NFC selected. Tap Read NFC to verify the permanent identity first. Switching ON does not lock the tag.";
+    }else if(restoreActionKind==="nfc"&&!restoreActionLayer.classList.contains("hidden")){
+      closeRestoreChoices();
+    }
+    renderRestoreNfcSecurity();
+  });
   document.getElementById("open-public-qr").addEventListener("click",()=>openRestoreChoices("qr"));
   document.getElementById("open-public-nfc").addEventListener("click",()=>openRestoreChoices("nfc"));
   document.getElementById("restore-action-close").addEventListener("click",closeRestoreChoices);
